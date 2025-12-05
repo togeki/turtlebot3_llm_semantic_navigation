@@ -64,6 +64,8 @@ Semantic Navigation への基礎的アーキテクチャを確立する。
 }
 ```
 
+この段階で LLM は，曖昧な自然言語を構造化された行動計画へ変換する役割を果たす。
+
 ## 4-2. JSON Plan → TurtleBot3 Control
 
 ROS2 ノード llm_controller.py は—
@@ -91,7 +93,7 @@ pip install google-generativeai
 export GOOGLE_API_KEY="your_api_key_here"
 ```
 
-## 5-1. ビルド
+## 5-2. ビルド
 
 ```bash
 cd ~/ros2_ws
@@ -99,13 +101,13 @@ colcon build
 source install/setup.bash
 ```
 
-## 5-2. 実行
+## 5-3. 実行
 
 ```bash
 ros2 run tb3_llm_controller llm_controller
 ```
 
-## 3. 指示例
+## 5-4. 指示例
 
 ```text
 少し前に進んで
@@ -131,14 +133,12 @@ LLM が生成した JSON 行動計画に従って自律的に動作する様子�
 現在，本システムは Semantic Navigation の LV1 を達成した。
 次の段階として以下を計画している：
 
-LV2：視覚セマンティック認識
-    カメラ + YOLO による物体検出
-    「机の近くへ」「ドア側に移動」など，
-    視覚情報を用いた意味的ナビゲーション
+LV2：視覚セマンティック認識  
+ - カメラ + YOLO による物体検出  
+ - 机の近くへ」「ドア側に移動」など，視覚情報を用いた意味的ナビゲーション  
 
-LV3：環境理解と抽象指示推論
-    LLM に環境情報（障害物・可視物体など）を入力
-    「安全な場所」「空いている場所」など，
-    抽象的指示に対する意味推論と行動理由の生成
+LV3：環境理解と抽象指示推論  
+ - LLM に環境情報（障害物・可視物体など）を入力  
+ - 「安全な場所」「空いている場所」など，抽象的指示に対する意味推論と行動理由の生成  
 
 ---
