@@ -20,7 +20,7 @@ User → Natural Language → LLM → Semantic Plan → Robot executes
 
 # 2. 研究動機
 
-従来のロボットナビゲーションは、数値ベース（x,y 座標）、低レベル命令（速度指令、角度指定）、使用者に専門知識が必要という問題があった。
+従来のロボットナビゲーションは，数値ベース（x,y 座標）や低レベル命令（速度指令）に依存しており，操作には専門知識が必要であるという課題があった。
 
 しかし，人間は「前に進んで，右の壁の近くで止まって」のように意味レベルで移動指示を行う。
 
@@ -79,6 +79,17 @@ ROS2 ノード llm_controller.py は—
 ---
 
 # 5. 使い方
+
+## 5-1. 必要要件
+
+* ROS 2 Humble / Foxy
+* Python 3.10+
+* Google Generative AI Library
+
+```bash
+pip install google-generativeai
+export GOOGLE_API_KEY="your_api_key_here"
+```
 
 ## 5-1. ビルド
 
