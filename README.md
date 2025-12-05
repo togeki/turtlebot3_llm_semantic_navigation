@@ -120,8 +120,7 @@ ros2 run tb3_llm_controller llm_controller
 
 # 6. 実行例
 
-
-
+![Screencastfrom12-05-2025052947PM-ezgif com-video-to-gif-converter](https://github.com/user-attachments/assets/d02d3083-a6d5-4727-8637-58bf147cd5bb)
 
 ロボットがユーザの日本語指示を受け取り，
 LLM が生成した JSON 行動計画に従って自律的に動作する様子を確認した。
