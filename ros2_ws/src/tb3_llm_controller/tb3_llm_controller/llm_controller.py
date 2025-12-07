@@ -5,6 +5,8 @@ import rclpy
 from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
 from geometry_msgs.msg import Twist
+from ament_index_python.packages import get_package_share_directory
+import os,yaml
 
 from tb3_llm_controller.gemini_planner import get_plan
 
@@ -18,6 +20,8 @@ class LLMController(Node):
 
     def __init__(self, plan):
         super().__init__('llm_controller')
+
+        self.semantic_places = self._load_semantic_places()
 
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
 
@@ -82,6 +86,28 @@ class LLMController(Node):
             self.current_mode = "stop"
             self.ticks_remaining = min_ticks
             self.get_logger().info(f"[Step {self.current_step_index}] STOP")
+        
+        elif action == "GO_TO_PLACE":
+            target = step.get("target", "").lower()
+
+            if target in self.semantic_places:
+                x, y, theta = self.semantic_places[target]
+                self.get_logger().info(
+                    f"[LV1.5] GO_TO_PLACE → '{target}' = (x={x:.2f}, y={y:.2f}, theta={theta:.2f})"
+                )
+
+                # 暂时用“向前走一小段”代替真正导航
+                distance = 0.3
+                duration = abs(distance) / self.linear_speed
+                self.current_mode = "forward"
+                self.ticks_remaining = int(duration / self.dt)
+
+            else:
+                self.get_logger().warn(f"[LV1.5] 未知语义地点 '{target}'，跳过此步骤")
+                self.current_step_index += 1
+                self._start_next_step()
+
+        
         else:
             self.get_logger().warn(f"Unknown action: {action}, skipping.")
             self.current_step_index += 1
@@ -121,6 +147,35 @@ class LLMController(Node):
         """この plan の実行が終わったかどうかを返す。"""
         return self.finished
 
+    def _load_semantic_places(self):
+        """
+        semantic_places.yaml を読み込み，
+        {place_name: (x, y, theta)} の辞書として返す。
+        """
+
+        try:
+            pkg_share = get_package_share_directory('tb3_llm_controller')
+            yaml_path = os.path.join(pkg_share, 'config', 'semantic_places.yaml')
+
+            with open(yaml_path, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f)
+
+            places = {}
+            for name, info in data.get('places', {}).items():
+                places[name] = (
+                    float(info.get('x', 0.0)),
+                    float(info.get('y', 0.0)),
+                    float(info.get('theta', 0.0))
+                )
+
+            self.get_logger().info(f"Loaded semantic places: {list(places.keys())}")
+            return places
+
+        except Exception as e:
+            self.get_logger().error(f"Failed to load semantic places: {e}")
+            return {}
+
+
 
 # ---- 1 コマンド分を実行するヘルパ関数 ----
 
@@ -131,13 +186,14 @@ def run_one_command(executor: SingleThreadedExecutor, user_cmd: str):
       2. LLMController ノードを作成
       3. plan が終わるまで実行
     """
-    print("LLM に計画生成を依頼中...")
 
-    try:
+    if user_cmd == "テスト窓":
+        print("[TEST] Semantic GO_TO_PLACE for 'window'")
+        plan = [{"action": "GO_TO_PLACE", "target": "window"}]
+        
+    else:
         plan = get_plan(user_cmd)
-    except Exception as e:
-        print(f"LLM からの計画生成に失敗しました: {e}")
-        return
+        print("LLM に計画生成を依頼中...")
 
     node = LLMController(plan)
     executor.add_node(node)

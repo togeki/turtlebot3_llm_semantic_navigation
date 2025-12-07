@@ -1,5 +1,8 @@
 from setuptools import find_packages, setup
 
+import os
+from glob import glob
+
 package_name = 'tb3_llm_controller'
 
 setup(
@@ -10,6 +13,9 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'config'),
+         glob('config/*.yaml')),
+
     ],
     install_requires=['setuptools','google-generativeai'],
     zip_safe=True,
@@ -24,8 +30,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-	'simple_script_controller = tb3_llm_controller.simple_script_controller:main',
-	'llm_controller = tb3_llm_controller.llm_controller:main',
+            'simple_script_controller = tb3_llm_controller.simple_script_controller:main',
+            'llm_controller = tb3_llm_controller.llm_controller:main',
         ],
     },
 )

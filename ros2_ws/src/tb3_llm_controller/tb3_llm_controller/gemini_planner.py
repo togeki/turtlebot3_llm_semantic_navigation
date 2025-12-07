@@ -16,28 +16,38 @@ MODEL_NAME = "models/gemini-2.5-flash"
 
 
 SYSTEM_PROMPT = """
-あなたは移動ロボット（TurtleBot3）の行動計画を立てるプランナーです。
-ユーザから与えられた【日本語の移動指示文】を，以下の JSON フォーマットに変換してください。
+あなたはロボットのための行動計画エージェントです。
 
-利用できるアクションは次の 4 つだけです：
-- FORWARD(distance)  // 前進。単位：メートル (m)
-- TURN_LEFT(angle)   // 左回転。単位：度 (degree)
-- TURN_RIGHT(angle)  // 右回転。単位：度 (degree)
-- STOP               // 停止。value は 0 とする
+入力は人間が話す日本語の指示です。
+出力は JSON のリストで、各要素は 1 ステップの行動を表します。
 
-出力フォーマット（例）：
-{
-  "plan": [
-    {"action": "FORWARD", "value": 0.5},
-    {"action": "TURN_LEFT", "value": 90},
-    {"action": "STOP", "value": 0}
-  ]
-}
+行動(action)は次の2種類のみを使用してください：
 
-必ず次のルールを守ってください：
-- 出力は JSON のみ。余計な文章や説明を書かない。
-- action は必ず大文字（FORWARD / TURN_LEFT / TURN_RIGHT / STOP）。
-- value は数値（float）で出力する。
+1) 低レベル行動（LV1）
+   - "FORWARD": まっすぐ進む
+   - "TURN_LEFT": 左へ曲がる
+   - "TURN_RIGHT": 右へ曲がる
+   - "STOP": 止まる
+
+2) 意味的移動（LV1.5 / LV2）
+   - "GO_TO_PLACE": 目的地（"window", "door", "table", "water" など）
+      例: { "action": "GO_TO_PLACE", "target": "window" }
+
+重要：
+- 「窓」「ドア」「机」などの語彙は、必ず target に英語の識別子
+  ("window", "door", "table") として出力してください。
+- 移動距離や角度は出力しないでください。ロボット側で処理します。
+- JSON以外の文章は出力しないでください。
+
+入力例：
+「窓のところに行って止まって」
+出力例：
+[
+  {"action": "GO_TO_PLACE", "target": "window"},
+  {"action": "STOP"}
+]
+
+それでは、ユーザ入力に対する行動計画を生成してください。
 """
 
 
@@ -80,12 +90,20 @@ def get_plan(command: str):
     raw = call_gemini(command)
     data = extract_json(raw)
 
-    plan = data.get("plan", [])
+    # 新しいフォーマットに対応：
+    # - data がそのままリストの場合 → それを plan とみなす
+    # - data が {"plan": [...]} の場合 → 従来通り取り出す
+    if isinstance(data, list):
+        plan = data
+    elif isinstance(data, dict):
+        plan = data.get("plan", [])
+    else:
+        raise ValueError("JSON の形式が不明です: " + str(data))
+
     if not isinstance(plan, list):
-        raise ValueError("JSON 中の 'plan' がリストではありません: " + str(data))
+        raise ValueError("最終的な plan がリストではありません: " + str(data))
 
     return plan
-
 
 if __name__ == "__main__":
     cmd = input("日本語でロボットへの指示を入力してください：\n> ")
