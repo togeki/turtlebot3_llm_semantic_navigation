@@ -127,6 +127,58 @@ LLM が生成した JSON 行動計画に従って自律的に動作する様子�
 
 ---
 
+# 7. Semantic Navigation（LV1.5）実装成果
+
+本プロジェクトは，単なる移動指示ではなく，
+**人間の自然言語に含まれる「意味」をロボット行動へ結び付ける**
+Semantic Navigation の基礎機構を実装しました。
+
+## 7-1. Semantic Places（意味地図）
+
+場所語彙と座標を紐づける `semantic_places.yaml` を導入：
+
+```yaml
+places:
+  window: {x: 1.0, y: 0.0, theta: 0.0}
+  door:   {x: -1.0, y: 0.0, theta: 3.14}
+  table:  {x: 0.0, y: 1.0, theta: 1.57}
+  water:  {x: 0.0, y: -1.0, theta: -1.57}
+```
+
+## 7-2. LLM による意味行動生成
+
+自然言語入力：
+
+```text
+窓のところに行って
+```
+
+Gemini により以下の行動計画を生成：
+
+```json
+[
+  {"action": "GO_TO_PLACE", "target": "window"}
+]
+```
+
+## 7-3. 実行ログ
+
+```csharp
+[INFO] Loaded semantic places: ['window', 'door', 'table', 'water']
+[INFO] [LV1.5] GO_TO_PLACE → 'window' = (x=1.00, y=0.00, theta=0.00)
+Plan finished. Robot will stop.
+```
+
+ロボットは 「窓」という語を意味的に理解し，
+　その座標へ移動する行動に変換できるようになった。
+
+
+
+
+
+
+ 
+
 # 7. 今後の研究展開
 
 現在，本システムは Semantic Navigation の LV1 を達成した。
