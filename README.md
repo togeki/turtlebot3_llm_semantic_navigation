@@ -179,7 +179,7 @@ Plan finished. Robot will stop.
 
  
 
-# 7. 今後の研究展開
+# 8. 今後の研究展開
 
 現在，本システムは Semantic Navigation の LV1 を達成した。
 次の段階として以下を計画している：
