@@ -145,6 +145,8 @@ places:
   water:  {x: 0.0, y: -1.0, theta: -1.57}
 ```
 
+
+
 ## 7-2. LLM による意味行動生成
 
 自然言語入力：
@@ -172,7 +174,16 @@ Plan finished. Robot will stop.
 ロボットは 「窓」という語を意味的に理解し，
 　その座標へ移動する行動に変換できるようになった。
 
+プロジェクト構成：
 
+```tset
+ros2_ws/src/tb3_llm_controller/
+  ├── tb3_llm_controller/
+  │     ├── llm_controller.py
+  │     └── gemini_planner.py
+  └── config/
+        └── semantic_places.yaml
+```
 
 
 
@@ -181,7 +192,7 @@ Plan finished. Robot will stop.
 
 # 8. 今後の研究展開
 
-現在，本システムは Semantic Navigation の LV1 を達成した。
+現在，本システムは Semantic Navigation の LV1~LV1.5 を達成した。
 次の段階として以下を計画している：
 
 LV2：視覚セマンティック認識  
