@@ -1,19 +1,13 @@
-## 8. LV2 – Nav2 + YOLO Visual Semantic Navigation  
-LV2 – Nav2 + YOLO 視覚セマンティックナビゲーション
+# 8. LV2 – Nav2 + YOLO 視覚セマンティックナビゲーション
 
-### 8.1 Goal / 目標
+## 8.1 目標
 
-- **EN:**  
-  Use a camera + YOLO to detect objects (boxes, doors, etc.) in the environment,  
-  let the LLM plan actions like `GO_TO_OBJECT`, and move the TurtleBot3 using Nav2.
-
-- **日本語:**  
   カメラと YOLO を使って環境中の物体（箱・ドアなど）を検出し，  
   LLM が `GO_TO_OBJECT` のようなアクションを生成して，Nav2 で TurtleBot3 を移動させる。
 
 ---
 
-### 8.2 New components in LV2 / LV2 で追加したコンポーネント
+## 8.2 LV2 で追加したコンポーネント
 
 - `worlds/semantic_room.world`  
   - いくつかの箱が置かれた簡単な部屋の Gazebo ワールド  
@@ -32,13 +26,3 @@ LV2 – Nav2 + YOLO 視覚セマンティックナビゲーション
   - サービスや簡単な API で「(x, y, theta) に移動して」と要求できる
 
 ---
-
-### 8.3 How to run LV2 simulation / LV2 シミュレーションの起動方法
-
-> ⚠ This part is WIP (work in progress).  
-> この部分は実装中です。
-
-#### 1. Launch Gazebo world with camera robot / カメラ付きロボット + ワールドを起動
-
-```bash
-ros2 launch tb3_llm_controller tb3_semantic_world.launch.py
