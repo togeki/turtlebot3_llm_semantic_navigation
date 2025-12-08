@@ -176,7 +176,7 @@ Plan finished. Robot will stop.
 
 プロジェクト構成：
 
-```tset
+```text
 ros2_ws/src/tb3_llm_controller/
   ├── tb3_llm_controller/
   │     ├── llm_controller.py
