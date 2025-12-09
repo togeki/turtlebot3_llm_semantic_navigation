@@ -1,20 +1,11 @@
 places:
-  window:
+  - name: "door"
     x: 1.0
     y: 0.0
-    theta: 0.0
+    yaw: 0.0
 
-  door:
-    x: -1.0
-    y: 0.0
-    theta: 3.14
-
-  table:
-    x: 0.0
+  - name: "window"
+    x: 2.0
     y: 1.0
-    theta: 1.57
+    yaw: 1.57
 
-  water:
-    x: 0.0
-    y: -1.0
-    theta: -1.57

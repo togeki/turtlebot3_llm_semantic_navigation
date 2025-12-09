@@ -6,6 +6,7 @@ from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
 from geometry_msgs.msg import Twist
 from ament_index_python.packages import get_package_share_directory
+from std_msgs.msg import String
 import os,yaml
 
 from tb3_llm_controller.gemini_planner import get_plan
@@ -28,6 +29,8 @@ class LLMController(Node):
         self.plan = plan
         self.current_step_index = 0
         self.ticks_remaining = 0
+
+        self.place_pub = self.create_publisher(String, 'llm_place', 10)
 
         # 制御パラメータ
         self.dt = 0.05            # timer period (s)
@@ -86,28 +89,40 @@ class LLMController(Node):
             self.current_mode = "stop"
             self.ticks_remaining = min_ticks
             self.get_logger().info(f"[Step {self.current_step_index}] STOP")
-        
+
         elif action == "GO_TO_PLACE":
             target = step.get("target", "").lower()
 
+            if not target:
+                self.get_logger().warn("[LV2] GO_TO_PLACE 没有 target，跳过此步骤")
+                self.current_step_index += 1
+                self._start_next_step()
+                return
+
+            # ✅ 直接把语义地点发给 Nav2 管线的入口 /llm_place
+            msg = String()
+            msg.data = target
+            self.place_pub.publish(msg)
+
+            # 如果 semantic_places 能读到，也顺便 log 一下（可选）
             if target in self.semantic_places:
                 x, y, theta = self.semantic_places[target]
                 self.get_logger().info(
-                    f"[LV1.5] GO_TO_PLACE → '{target}' = (x={x:.2f}, y={y:.2f}, theta={theta:.2f})"
+                    f"[LV2] GO_TO_PLACE '{target}' → (x={x:.2f}, y={y:.2f}, theta={theta:.2f}) → 已发布到 /llm_place，由 Nav2 执行导航"
+                )
+            else:
+                self.get_logger().info(
+                    f"[LV2] GO_TO_PLACE '{target}' 已发布到 /llm_place（semantic_places 中未找到详细坐标，依赖下游节点处理）"
                 )
 
-                # 暂时用“向前走一小段”代替真正导航
-                distance = 0.3
-                duration = abs(distance) / self.linear_speed
-                self.current_mode = "forward"
-                self.ticks_remaining = int(duration / self.dt)
+            # 本节点不再自己发 cmd_vel，由 Nav2 接管移动
+            self.current_mode = "stop"
+            self.ticks_remaining = 1  # 让 timer 走一步然后进入下一步
+            self.current_step_index += 1
+            self._start_next_step()
+            return
 
-            else:
-                self.get_logger().warn(f"[LV1.5] 未知语义地点 '{target}'，跳过此步骤")
-                self.current_step_index += 1
-                self._start_next_step()
 
-        
         else:
             self.get_logger().warn(f"Unknown action: {action}, skipping.")
             self.current_step_index += 1
@@ -147,26 +162,55 @@ class LLMController(Node):
         """この plan の実行が終わったかどうかを返す。"""
         return self.finished
 
+
     def _load_semantic_places(self):
         """
         semantic_places.yaml を読み込み，
         {place_name: (x, y, theta)} の辞書として返す。
-        """
 
+        YAML は 2 つの形式どちらでも対応:
+        1) 古い形式:
+           places:
+             door: {x: ..., y: ..., theta: ...}
+        2) 新しい形式（LV1.5 で使用中）:
+           places:
+             - name: "door"
+               x: ...
+               y: ...
+               yaw: ...  # または theta
+        """
         try:
             pkg_share = get_package_share_directory('tb3_llm_controller')
             yaml_path = os.path.join(pkg_share, 'config', 'semantic_places.yaml')
 
             with open(yaml_path, 'r', encoding='utf-8') as f:
-                data = yaml.safe_load(f)
+                data = yaml.safe_load(f) or {}
+
+            raw_places = data.get('places', {})
 
             places = {}
-            for name, info in data.get('places', {}).items():
-                places[name] = (
-                    float(info.get('x', 0.0)),
-                    float(info.get('y', 0.0)),
-                    float(info.get('theta', 0.0))
-                )
+
+            # ① 古い dict 形式: places: {door: {...}, window: {...}}
+            if isinstance(raw_places, dict):
+                for name, info in raw_places.items():
+                    name = str(name).strip().lower()
+                    x = float(info.get('x', 0.0))
+                    y = float(info.get('y', 0.0))
+                    theta = float(info.get('theta', info.get('yaw', 0.0)))
+                    places[name] = (x, y, theta)
+
+            # ② 新しい list 形式: places: [ {name: "door", x:..., y:..., yaw:...}, ... ]
+            elif isinstance(raw_places, list):
+                for item in raw_places:
+                    if not isinstance(item, dict):
+                        continue
+                    name = str(item.get('name', '')).strip().lower()
+                    if not name:
+                        continue
+                    x = float(item.get('x', 0.0))
+                    y = float(item.get('y', 0.0))
+                    theta = float(item.get('theta', item.get('yaw', 0.0)))
+                    places[name] = (x, y, theta)
 
             self.get_logger().info(f"Loaded semantic places: {list(places.keys())}")
             return places
@@ -174,6 +218,7 @@ class LLMController(Node):
         except Exception as e:
             self.get_logger().error(f"Failed to load semantic places: {e}")
             return {}
+
 
 
 
