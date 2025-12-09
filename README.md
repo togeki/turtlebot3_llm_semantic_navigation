@@ -1,4 +1,4 @@
-# 10. LV2 – Nav2 + YOLO 視覚セマンティックナビゲーション
+# 10. LV2 – Nav2 Integration (Semantic Map)
 
 ## 10-1 目標
 
