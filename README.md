@@ -46,6 +46,11 @@ plan 内の GO_TO_PLACE target を /llm_place に Publish
 として /llm_nav_json に Publish
 セマンティック層 → ナビゲーション層の橋渡しを行う
 
+ - tb3_llm_controller/nodes/llm_nav_bridge.py（実装済）
+
+JSON を Nav2 が扱える PoseStamped に変換し /go_to_pose へ送信
+ナビゲーション Action のトリガー役
+
  - tb3_llm_controller/nodes/nav2_client.py（実装済）
 
 Nav2 の NavigateToPose Action を wrap し，
