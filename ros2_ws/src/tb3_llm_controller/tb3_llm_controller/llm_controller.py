@@ -6,41 +6,47 @@ from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
 from geometry_msgs.msg import Twist
 from ament_index_python.packages import get_package_share_directory
+from std_msgs.msg import String
+import threading
 import os,yaml
 
 from tb3_llm_controller.gemini_planner import get_plan
 
 
 class LLMController(Node):
-    """
-    LLM から受け取った plan（FORWARD / TURN_LEFT / TURN_RIGHT / STOP）を
-    順番に実行するノード。
-    1 つの plan を実行し終わると finished フラグが立つ。
-    """
-
-    def __init__(self, plan):
+    def __init__(self):
         super().__init__('llm_controller')
 
         self.semantic_places = self._load_semantic_places()
 
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
+        self.place_pub = self.create_publisher(String, 'llm_place', 10)
 
+        # 控制パラメータ
+        self.dt = 0.05
+        self.linear_speed = 0.1
+        self.angular_speed = 0.5
+
+        # 运行状态
+        self.plan = []
+        self.current_step_index = 0
+        self.ticks_remaining = 0
+        self.current_mode = "stop"
+        self.finished = True   # 没有 plan 时视为 finished
+
+        self.timer = self.create_timer(self.dt, self.timer_callback)
+        self.get_logger().info("LLMController node started (idle). Waiting for commands...")
+
+    def set_plan(self, plan):
+        """外部调用：设置新 plan 并开始执行"""
         self.plan = plan
         self.current_step_index = 0
         self.ticks_remaining = 0
-
-        # 制御パラメータ
-        self.dt = 0.05            # timer period (s)
-        self.linear_speed = 0.1   # m/s
-        self.angular_speed = 0.5  # rad/s
-
-        self.current_mode = "stop"  # "forward" / "turn_left" / "turn_right" / "stop"
-        self.finished = False       # この plan が終わったかどうか
-
-        self.timer = self.create_timer(self.dt, self.timer_callback)
-
-        self.get_logger().info(f"LLMController started with {len(self.plan)} steps.")
+        self.current_mode = "stop"
+        self.finished = False
+        self.get_logger().info(f"New plan received: {len(self.plan)} steps.")
         self._start_next_step()
+
 
     # ---- 内部ロジック ----
 
@@ -86,28 +92,40 @@ class LLMController(Node):
             self.current_mode = "stop"
             self.ticks_remaining = min_ticks
             self.get_logger().info(f"[Step {self.current_step_index}] STOP")
-        
+
         elif action == "GO_TO_PLACE":
             target = step.get("target", "").lower()
 
+            if not target:
+                self.get_logger().warn("[LV2] GO_TO_PLACE 没有 target，跳过此步骤")
+                self.current_step_index += 1
+                self._start_next_step()
+                return
+
+            # ✅ 直接把语义地点发给 Nav2 管线的入口 /llm_place
+            msg = String()
+            msg.data = target
+            self.place_pub.publish(msg)
+
+            # 如果 semantic_places 能读到，也顺便 log 一下（可选）
             if target in self.semantic_places:
                 x, y, theta = self.semantic_places[target]
                 self.get_logger().info(
-                    f"[LV1.5] GO_TO_PLACE → '{target}' = (x={x:.2f}, y={y:.2f}, theta={theta:.2f})"
+                    f"[LV2] GO_TO_PLACE '{target}' → (x={x:.2f}, y={y:.2f}, theta={theta:.2f}) → 已发布到 /llm_place，由 Nav2 执行导航"
+                )
+            else:
+                self.get_logger().info(
+                    f"[LV2] GO_TO_PLACE '{target}' 已发布到 /llm_place（semantic_places 中未找到详细坐标，依赖下游节点处理）"
                 )
 
-                # 暂时用“向前走一小段”代替真正导航
-                distance = 0.3
-                duration = abs(distance) / self.linear_speed
-                self.current_mode = "forward"
-                self.ticks_remaining = int(duration / self.dt)
+            # 本节点不再自己发 cmd_vel，由 Nav2 接管移动
+            self.current_mode = "stop"
+            self.ticks_remaining = 1  # 让 timer 走一步然后进入下一步
+            self.current_step_index += 1
+            self._start_next_step()
+            return
 
-            else:
-                self.get_logger().warn(f"[LV1.5] 未知语义地点 '{target}'，跳过此步骤")
-                self.current_step_index += 1
-                self._start_next_step()
 
-        
         else:
             self.get_logger().warn(f"Unknown action: {action}, skipping.")
             self.current_step_index += 1
@@ -147,26 +165,55 @@ class LLMController(Node):
         """この plan の実行が終わったかどうかを返す。"""
         return self.finished
 
+
     def _load_semantic_places(self):
         """
         semantic_places.yaml を読み込み，
         {place_name: (x, y, theta)} の辞書として返す。
-        """
 
+        YAML は 2 つの形式どちらでも対応:
+        1) 古い形式:
+           places:
+             door: {x: ..., y: ..., theta: ...}
+        2) 新しい形式（LV1.5 で使用中）:
+           places:
+             - name: "door"
+               x: ...
+               y: ...
+               yaw: ...  # または theta
+        """
         try:
             pkg_share = get_package_share_directory('tb3_llm_controller')
             yaml_path = os.path.join(pkg_share, 'config', 'semantic_places.yaml')
 
             with open(yaml_path, 'r', encoding='utf-8') as f:
-                data = yaml.safe_load(f)
+                data = yaml.safe_load(f) or {}
+
+            raw_places = data.get('places', {})
 
             places = {}
-            for name, info in data.get('places', {}).items():
-                places[name] = (
-                    float(info.get('x', 0.0)),
-                    float(info.get('y', 0.0)),
-                    float(info.get('theta', 0.0))
-                )
+
+            # ① 古い dict 形式: places: {door: {...}, window: {...}}
+            if isinstance(raw_places, dict):
+                for name, info in raw_places.items():
+                    name = str(name).strip().lower()
+                    x = float(info.get('x', 0.0))
+                    y = float(info.get('y', 0.0))
+                    theta = float(info.get('theta', info.get('yaw', 0.0)))
+                    places[name] = (x, y, theta)
+
+            # ② 新しい list 形式: places: [ {name: "door", x:..., y:..., yaw:...}, ... ]
+            elif isinstance(raw_places, list):
+                for item in raw_places:
+                    if not isinstance(item, dict):
+                        continue
+                    name = str(item.get('name', '')).strip().lower()
+                    if not name:
+                        continue
+                    x = float(item.get('x', 0.0))
+                    y = float(item.get('y', 0.0))
+                    theta = float(item.get('theta', item.get('yaw', 0.0)))
+                    places[name] = (x, y, theta)
 
             self.get_logger().info(f"Loaded semantic places: {list(places.keys())}")
             return places
@@ -174,6 +221,7 @@ class LLMController(Node):
         except Exception as e:
             self.get_logger().error(f"Failed to load semantic places: {e}")
             return {}
+
 
 
 
@@ -208,25 +256,55 @@ def run_one_command(executor: SingleThreadedExecutor, user_cmd: str):
 
 # ---- main：多輪指令版 ----
 
+import threading
+
 def main(args=None):
     rclpy.init(args=args)
     executor = SingleThreadedExecutor()
 
-    try:
+    node = LLMController()
+    executor.add_node(node)
+
+    def input_loop():
         while rclpy.ok():
-            user_cmd = input("\nロボットへの日本語指示を入力してください（q で終了）：\n> ").strip()
+            try:
+                user_cmd = input("\nロボットへの日本語指示を入力してください（q で終了）：\n> ").strip()
+            except EOFError:
+                break
+
             if user_cmd.lower() in ("q", "quit", "exit"):
                 print("LLM コントローラを終了します。")
+                rclpy.shutdown()
                 break
+
             if not user_cmd:
                 continue
 
-            run_one_command(executor, user_cmd)
+            # 生成 plan
+            if user_cmd == "テスト窓":
+                print("[TEST] Semantic GO_TO_PLACE for 'window'")
+                plan = [{"action": "GO_TO_PLACE", "target": "window"}]
+            else:
+                print("LLM に計画生成を依頼中...")
+                plan = get_plan(user_cmd)
 
+            # 下发给常驻 node 执行
+            node.set_plan(plan)
+
+    t = threading.Thread(target=input_loop, daemon=True)
+    t.start()
+
+    try:
+        while rclpy.ok():
+            executor.spin_once(timeout_sec=0.1)
     except KeyboardInterrupt:
         pass
     finally:
-        rclpy.shutdown()
+        executor.remove_node(node)
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
 
 
 if __name__ == "__main__":
