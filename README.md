@@ -65,6 +65,7 @@ ROS2 → PostgreSQL → KPI 計算 → Web ダッシュボード
 - KPI ランキング表示（最短時間・最短距離・最安定走行）
 
 <img width="1885" height="951" alt="image" src="https://github.com/user-attachments/assets/094475eb-16d6-4d5d-a1f4-e65aa7cefdb5" />
+<img width="1884" height="252" alt="image" src="https://github.com/user-attachments/assets/fdf65c82-995e-4537-900e-4ad08df8ecaf" />
 
 ---
 
