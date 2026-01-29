@@ -24,17 +24,7 @@ ROS2 → PostgreSQL → KPI 計算 → Web ダッシュボード
 
 # 2. システム構成（Architecture）
 
----text
-[LLM / Script / Nav2]
-↓
-ROS2 Topics
-↓
-tb3_collector
-↓
-PostgreSQL
-↓
-Streamlit Dashboard
----
+<img width="1024" height="1536" alt="ChatGPT Image 2026年1月29日 20_53_11" src="https://github.com/user-attachments/assets/274401c4-6963-4e11-803a-49097c41e2d5" />
 
 ---
 
@@ -73,6 +63,8 @@ Streamlit Dashboard
 - 軌跡（x-y）表示
 - 制御信号（/cmd_vel）分析
 - KPI ランキング表示（最短時間・最短距離・最安定走行）
+
+<img width="1885" height="951" alt="image" src="https://github.com/user-attachments/assets/094475eb-16d6-4d5d-a1f4-e65aa7cefdb5" />
 
 ---
 
