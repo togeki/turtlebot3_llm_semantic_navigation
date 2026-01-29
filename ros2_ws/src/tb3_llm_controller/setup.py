@@ -15,18 +15,6 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'config'),
          glob('config/*.yaml')),
-        (os.path.join('share', package_name, 'launch'), [
-            'launch/tb3_semantic_world.launch.py',
-        ]),
-        (os.path.join('share', package_name, 'worlds'), [
-            'worlds/semantic_room.world',
-        ]),
-        (os.path.join('share', package_name, 'urdf'), [
-            'urdf/tb3_with_cam.urdf',
-        ]),
-        ('share/ament_index/resource_index/packages', ['resource/tb3_llm_controller']),
-        ('share/tb3_llm_controller', ['package.xml']),
-        (os.path.join('share', 'tb3_llm_controller', 'launch'), glob('launch/*.launch.py')),
 
     ],
     install_requires=['setuptools','google-generativeai'],
@@ -44,10 +32,6 @@ setup(
         'console_scripts': [
             'simple_script_controller = tb3_llm_controller.simple_script_controller:main',
             'llm_controller = tb3_llm_controller.llm_controller:main',
-            'nav2_client = tb3_llm_controller.nav2_client:main',
-            'place_nav_client = tb3_llm_controller.place_nav_client:main',
-            'llm_nav_bridge = tb3_llm_controller.llm_nav_bridge:main',
-            'semantic_place_bridge = tb3_llm_controller.semantic_place_bridge:main',
         ],
     },
 )
