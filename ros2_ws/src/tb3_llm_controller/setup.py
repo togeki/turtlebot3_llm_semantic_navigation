@@ -24,6 +24,9 @@ setup(
         (os.path.join('share', package_name, 'urdf'), [
             'urdf/tb3_with_cam.urdf',
         ]),
+        ('share/ament_index/resource_index/packages', ['resource/tb3_llm_controller']),
+        ('share/tb3_llm_controller', ['package.xml']),
+        (os.path.join('share', 'tb3_llm_controller', 'launch'), glob('launch/*.launch.py')),
 
     ],
     install_requires=['setuptools','google-generativeai'],

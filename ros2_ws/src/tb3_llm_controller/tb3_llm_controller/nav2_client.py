@@ -7,6 +7,8 @@ from rclpy.action import ActionClient
 
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
+from std_msgs.msg import String
+import json
 
 
 class Nav2Client(Node):
@@ -27,6 +29,9 @@ class Nav2Client(Node):
             10
         )
         self.get_logger().info('Topic [/go_to_pose] subscriber ready.')
+        # 发布导航结果（给数据采集器结束 run 用）
+        self._nav_result_pub = self.create_publisher(String, '/tb3_nav_result', 10)
+
 
     # 外部可直接调用的接口
     def go_to(self, x: float, y: float, yaw: float = 0.0) -> None:
@@ -72,8 +77,18 @@ class Nav2Client(Node):
         result_future.add_done_callback(self._result_callback)
 
     def _result_callback(self, future):
-        status = future.result().status
-        self.get_logger().info(f'Nav2 finished with status: {status}')
+        res = future.result()
+        status_code = res.status
+        self.get_logger().info(f'Nav2 finished with status: {status_code}')
+
+        # 发给采集器：/tb3_nav_result (JSON)
+        msg = String()
+        msg.data = json.dumps({
+            "status_code": int(status_code),
+            # Nav2 status_code: 0=UNKNOWN 1=ACCEPTED 2=EXECUTING 3=CANCELING 4=SUCCEEDED 5=CANCELED 6=ABORTED
+            # 你面试时也能直接解释这个映射
+        })
+        self._nav_result_pub.publish(msg)
 
 
 def main(args=None):

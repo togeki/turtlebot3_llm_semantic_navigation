@@ -7,43 +7,46 @@ from rclpy.executors import SingleThreadedExecutor
 from geometry_msgs.msg import Twist
 from ament_index_python.packages import get_package_share_directory
 from std_msgs.msg import String
+import threading
 import os,yaml
 
 from tb3_llm_controller.gemini_planner import get_plan
 
 
 class LLMController(Node):
-    """
-    LLM から受け取った plan（FORWARD / TURN_LEFT / TURN_RIGHT / STOP）を
-    順番に実行するノード。
-    1 つの plan を実行し終わると finished フラグが立つ。
-    """
-
-    def __init__(self, plan):
+    def __init__(self):
         super().__init__('llm_controller')
 
         self.semantic_places = self._load_semantic_places()
 
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
+        self.place_pub = self.create_publisher(String, 'llm_place', 10)
 
+        # 控制パラメータ
+        self.dt = 0.05
+        self.linear_speed = 0.1
+        self.angular_speed = 0.5
+
+        # 运行状态
+        self.plan = []
+        self.current_step_index = 0
+        self.ticks_remaining = 0
+        self.current_mode = "stop"
+        self.finished = True   # 没有 plan 时视为 finished
+
+        self.timer = self.create_timer(self.dt, self.timer_callback)
+        self.get_logger().info("LLMController node started (idle). Waiting for commands...")
+
+    def set_plan(self, plan):
+        """外部调用：设置新 plan 并开始执行"""
         self.plan = plan
         self.current_step_index = 0
         self.ticks_remaining = 0
-
-        self.place_pub = self.create_publisher(String, 'llm_place', 10)
-
-        # 制御パラメータ
-        self.dt = 0.05            # timer period (s)
-        self.linear_speed = 0.1   # m/s
-        self.angular_speed = 0.5  # rad/s
-
-        self.current_mode = "stop"  # "forward" / "turn_left" / "turn_right" / "stop"
-        self.finished = False       # この plan が終わったかどうか
-
-        self.timer = self.create_timer(self.dt, self.timer_callback)
-
-        self.get_logger().info(f"LLMController started with {len(self.plan)} steps.")
+        self.current_mode = "stop"
+        self.finished = False
+        self.get_logger().info(f"New plan received: {len(self.plan)} steps.")
         self._start_next_step()
+
 
     # ---- 内部ロジック ----
 
@@ -253,25 +256,55 @@ def run_one_command(executor: SingleThreadedExecutor, user_cmd: str):
 
 # ---- main：多輪指令版 ----
 
+import threading
+
 def main(args=None):
     rclpy.init(args=args)
     executor = SingleThreadedExecutor()
 
-    try:
+    node = LLMController()
+    executor.add_node(node)
+
+    def input_loop():
         while rclpy.ok():
-            user_cmd = input("\nロボットへの日本語指示を入力してください（q で終了）：\n> ").strip()
+            try:
+                user_cmd = input("\nロボットへの日本語指示を入力してください（q で終了）：\n> ").strip()
+            except EOFError:
+                break
+
             if user_cmd.lower() in ("q", "quit", "exit"):
                 print("LLM コントローラを終了します。")
+                rclpy.shutdown()
                 break
+
             if not user_cmd:
                 continue
 
-            run_one_command(executor, user_cmd)
+            # 生成 plan
+            if user_cmd == "テスト窓":
+                print("[TEST] Semantic GO_TO_PLACE for 'window'")
+                plan = [{"action": "GO_TO_PLACE", "target": "window"}]
+            else:
+                print("LLM に計画生成を依頼中...")
+                plan = get_plan(user_cmd)
 
+            # 下发给常驻 node 执行
+            node.set_plan(plan)
+
+    t = threading.Thread(target=input_loop, daemon=True)
+    t.start()
+
+    try:
+        while rclpy.ok():
+            executor.spin_once(timeout_sec=0.1)
     except KeyboardInterrupt:
         pass
     finally:
-        rclpy.shutdown()
+        executor.remove_node(node)
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
 
 
 if __name__ == "__main__":
