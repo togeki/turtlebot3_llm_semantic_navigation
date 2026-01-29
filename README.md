@@ -1,28 +1,87 @@
-# 8. LV2 – Nav2 + YOLO 視覚セマンティックナビゲーション
+# TurtleBot3 データパイプライン & 可視化システム
 
-## 8.1 目標
+ROS2（Humble）と PostgreSQL を用いて、
+ロボットの実験データを収集・保存・分析・可視化する
+エンドツーエンドのデータ基盤を構築した。
 
-  カメラと YOLO を使って環境中の物体（箱・ドアなど）を検出し，  
-  LLM が `GO_TO_OBJECT` のようなアクションを生成して，Nav2 で TurtleBot3 を移動させる。
+本プロジェクトは、
+ロボット実験を「データエンジニアリングの視点」で再設計することを目的とする。
 
 ---
 
-## 8.2 LV2 で追加したコンポーネント
+# 1. 概要（Overview）
 
-- `worlds/semantic_room.world`  
-  - いくつかの箱が置かれた簡単な部屋の Gazebo ワールド  
-  - YOLO が検出しやすいように，色付きのオブジェクトを配置
+本システムは以下の流れで構成されている。
 
-- `urdf/tb3_with_cam.urdf.xacro`  
-  - TurtleBot3 に頭上カメラ（`camera_link`）を追加した URDF  
-  - Gazebo の camera plugin により `/camera/image_raw` を Publish
+ROS2 → PostgreSQL → KPI 計算 → Web ダッシュボード
 
-- `tb3_llm_controller/nodes/yolo_detector.py`（予定）  
-  - `/camera/image_raw` を Subscribe  
-  - YOLO で物体検出を行い，`/detected_objects` トピックとして Publish
+- ROS2 上のトピック（/odom, /cmd_vel, ナビゲーション結果）を収集
+- PostgreSQL に run 単位 + 時系列データとして保存
+- 実行結果から自動的に KPI を算出
+- Streamlit により可視化・比較・分析を可能にする
 
-- `tb3_llm_controller/nodes/nav2_client.py`（予定）  
-  - Nav2 の `NavigateToPose` Action をラップするクライアントノード  
-  - サービスや簡単な API で「(x, y, theta) に移動して」と要求できる
+---
+
+# 2. システム構成（Architecture）
+
+---text
+[LLM / Script / Nav2]
+↓
+ROS2 Topics
+↓
+tb3_collector
+↓
+PostgreSQL
+↓
+Streamlit Dashboard
+---
+
+---
+
+# 3.データベース設計（Database Schema）
+
+本システムでは以下の 3 テーブルを使用する。
+
+1. runs  
+   実験 1 回分のメタ情報および KPI を保持
+
+2. events  
+   LLM 指示、ナビゲーション目標、結果などのイベント履歴
+
+3. timeseries_messages  
+   /odom, /cmd_vel などの時系列トピックデータ
+
+---
+
+# 4. KPI 定義（評価指標）
+
+本研究では以下の指標を自動算出する。
+
+| 指標名 | 説明 |
+|------|------|
+| duration_s | 実行時間 |
+| path_length_m | 走行距離 |
+| avg_speed_mps | 平均速度 |
+| stop_ratio | 停止状態の割合 |
+
+---
+
+# 5. ダッシュボード機能
+
+- 実験一覧管理
+- 成功・失敗の可視化
+- 軌跡（x-y）表示
+- 制御信号（/cmd_vel）分析
+- KPI ランキング表示（最短時間・最短距離・最安定走行）
+
+---
+
+# 6. 6. 技術スタック
+
+- ROS2 Humble
+- Nav2
+- PostgreSQL
+- Python (psycopg, pandas)
+- Streamlit
 
 ---
