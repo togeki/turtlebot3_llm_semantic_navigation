@@ -2,18 +2,11 @@
 
 import os
 import json
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
-# 環境変数から API キーを取得
-API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-    raise RuntimeError("環境変数 GEMINI_API_KEY が設定されていません。export GEMINI_API_KEY=... してください。")
-
-genai.configure(api_key=API_KEY)
-
-# 利用するモデル（あなたの list_models にあったやつ）
-MODEL_NAME = "models/gemini-2.5-flash"
-
+# Keep credentials outside source control. Read them only when calling the API.
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 SYSTEM_PROMPT = """
 あなたはロボットのための行動計画エージェントです。
@@ -29,22 +22,19 @@ SYSTEM_PROMPT = """
    - "TURN_RIGHT": 右へ曲がる
    - "STOP": 止まる
 
-2) 意味的移動（LV1.5 / LV2）
-   - "GO_TO_PLACE": 目的地（"window", "door", "table", "water" など）
-      例: { "action": "GO_TO_PLACE", "target": "window" }
-
 重要：
-- 「窓」「ドア」「机」などの語彙は、必ず target に英語の識別子
-  ("window", "door", "table") として出力してください。
-- 移動距離や角度は出力しないでください。ロボット側で処理します。
+- FORWARD は value に距離（m、0 より大きく 0.5 以下）を出力してください。指定がなければ 0.2。
+- TURN_LEFT / TURN_RIGHT は value に角度（度、0 より大きく 180 以下）を出力してください。指定がなければ 90。
+- STOP は value: 0。今回のデモでは GO_TO_PLACE は使用しないでください。
 - JSON以外の文章は出力しないでください。
 
 入力例：
-「窓のところに行って止まって」
+「0.2メートル前進して右に90度回転して停止して」
 出力例：
 [
-  {"action": "GO_TO_PLACE", "target": "window"},
-  {"action": "STOP"}
+  {"action": "FORWARD", "value": 0.2},
+  {"action": "TURN_RIGHT", "value": 90},
+  {"action": "STOP", "value": 0}
 ]
 
 それでは、ユーザ入力に対する行動計画を生成してください。
@@ -53,13 +43,18 @@ SYSTEM_PROMPT = """
 
 def call_gemini(command: str) -> str:
     """日本語コマンドから JSON 文字列（plan を含む）を生成する。"""
-    model = genai.GenerativeModel(MODEL_NAME)
-
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY を設定してください。")
     prompt = SYSTEM_PROMPT + "\n\nユーザの指示文：\n" + command
-
-    response = model.generate_content(prompt)
-
-    # response.text には JSON 文字列または ```json ... ``` 形式が入ることが多い
+    with genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=30000)) as client:
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt,
+            config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0),
+        )
+    if not response.text:
+        raise ValueError("Gemini returned no text")
     return response.text
 
 
@@ -103,7 +98,31 @@ def get_plan(command: str):
     if not isinstance(plan, list):
         raise ValueError("最終的な plan がリストではありません: " + str(data))
 
-    return plan
+    return validate_plan(plan)
+
+def validate_plan(plan):
+    """Reject unsupported or unbounded commands before any motion starts."""
+    import math
+    if not isinstance(plan, list) or not 1 <= len(plan) <= 10:
+        raise ValueError("Plan must contain 1–10 steps")
+    validated = []
+    for step in plan:
+        if not isinstance(step, dict):
+            raise ValueError("Each step must be an object")
+        action = step.get("action")
+        if action not in ("FORWARD", "TURN_LEFT", "TURN_RIGHT", "STOP"):
+            raise ValueError("Unsupported action: " + str(action))
+        value = step.get("value")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError("A finite numeric value is required")
+        limit = 0.5 if action == "FORWARD" else 180
+        if (action == "STOP" and value != 0) or (action != "STOP" and not 0 < value <= limit):
+            raise ValueError("Value outside demo limits")
+        validated.append({"action": action, "value": float(value)})
+    if validated[-1]["action"] != "STOP":
+        validated.append({"action": "STOP", "value": 0.0})
+    return validated
+
 
 if __name__ == "__main__":
     cmd = input("日本語でロボットへの指示を入力してください：\n> ")

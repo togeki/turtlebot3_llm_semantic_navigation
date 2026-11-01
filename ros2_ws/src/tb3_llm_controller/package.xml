@@ -4,11 +4,16 @@
   <name>tb3_llm_controller</name>
   <version>0.1.0</version>
   <description>TurtleBot3 LLM-based semantic navigation (LV1)</description>
-  <maintainer email="togqi0725@gmail.com">tgq</maintainer>
+  <maintainer email="maintainer@example.com">tgq</maintainer>
   <license>MIT</license>
 
   <depend>rclpy</depend>
   <depend>geometry_msgs</depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>turtlebot3_gazebo</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

@@ -2,13 +2,15 @@
 
 import math
 import rclpy
+from rclpy.signals import SignalHandlerOptions
 from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, TwistStamped
 from ament_index_python.packages import get_package_share_directory
-import os,yaml
+import os
+import yaml
 
-from tb3_llm_controller.gemini_planner import get_plan
+from tb3_llm_controller.gemini_planner import get_plan, validate_plan
 
 
 class LLMController(Node):
@@ -23,9 +25,10 @@ class LLMController(Node):
 
         self.semantic_places = self._load_semantic_places()
 
-        self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
+        self.stamped = self.declare_parameter('stamped_cmd_vel', True).value
+        self.cmd_pub = self.create_publisher(TwistStamped if self.stamped else Twist, 'cmd_vel', 10)
 
-        self.plan = plan
+        self.plan = validate_plan(plan)
         self.current_step_index = 0
         self.ticks_remaining = 0
 
@@ -44,12 +47,23 @@ class LLMController(Node):
 
     # ---- 内部ロジック ----
 
+    def publish_velocity(self, twist):
+        if self.stamped:
+            message = TwistStamped()
+            message.header.stamp = self.get_clock().now().to_msg()
+            message.header.frame_id = 'base_link'
+            message.twist = twist
+        else:
+            message = twist
+        self.cmd_pub.publish(message)
+
     def _start_next_step(self):
         """次のステップへ進み，必要な tick 数を計算する。"""
         if self.current_step_index >= len(self.plan):
             self.get_logger().info("Plan finished. Robot will stop.")
             self.current_mode = "stop"
             self.ticks_remaining = -1
+            self.publish_velocity(Twist())
             self.finished = True
             return
 
@@ -120,7 +134,7 @@ class LLMController(Node):
             # 完全終了：停止状態を維持
             msg.linear.x = 0.0
             msg.angular.z = 0.0
-            self.cmd_pub.publish(msg)
+            self.publish_velocity(msg)
             return
 
         if self.current_mode == "forward":
@@ -136,7 +150,7 @@ class LLMController(Node):
             msg.linear.x = 0.0
             msg.angular.z = 0.0
 
-        self.cmd_pub.publish(msg)
+        self.publish_velocity(msg)
 
         self.ticks_remaining -= 1
         if self.ticks_remaining <= 0:
@@ -187,13 +201,9 @@ def run_one_command(executor: SingleThreadedExecutor, user_cmd: str):
       3. plan が終わるまで実行
     """
 
-    if user_cmd == "テスト窓":
-        print("[TEST] Semantic GO_TO_PLACE for 'window'")
-        plan = [{"action": "GO_TO_PLACE", "target": "window"}]
-        
-    else:
-        plan = get_plan(user_cmd)
-        print("LLM に計画生成を依頼中...")
+    print("LLM に計画生成を依頼中...")
+    plan = get_plan(user_cmd)
+    print("Generated plan:", plan)
 
     node = LLMController(plan)
     executor.add_node(node)
@@ -202,6 +212,7 @@ def run_one_command(executor: SingleThreadedExecutor, user_cmd: str):
         while rclpy.ok() and not node.is_finished():
             executor.spin_once(timeout_sec=0.1)
     finally:
+        node.publish_velocity(Twist())
         executor.remove_node(node)
         node.destroy_node()
 
@@ -209,7 +220,7 @@ def run_one_command(executor: SingleThreadedExecutor, user_cmd: str):
 # ---- main：多輪指令版 ----
 
 def main(args=None):
-    rclpy.init(args=args)
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     executor = SingleThreadedExecutor()
 
     try:
@@ -221,9 +232,13 @@ def main(args=None):
             if not user_cmd:
                 continue
 
-            run_one_command(executor, user_cmd)
+            try:
+                run_one_command(executor, user_cmd)
+            except Exception as exc:
+                # Avoid dumping API exceptions that may contain request metadata.
+                print(f"Command failed ({type(exc).__name__}). Check plan, API key, model and quota.")
 
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, EOFError):
         pass
     finally:
         rclpy.shutdown()

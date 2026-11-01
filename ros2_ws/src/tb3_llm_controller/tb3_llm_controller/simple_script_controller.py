@@ -1,11 +1,13 @@
 import rclpy
+from rclpy.signals import SignalHandlerOptions
 from rclpy.node import Node
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, TwistStamped
 
 class SimpleScriptController(Node):
     def __init__(self):
         super().__init__('simple_script_controller')
-        self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
+        self.stamped = self.declare_parameter('stamped_cmd_vel', True).value
+        self.cmd_pub = self.create_publisher(TwistStamped if self.stamped else Twist, 'cmd_vel', 10)
 
         # 状态：0=前进，1=左转，2=再前进，3=停止
         self.state = 0
@@ -15,6 +17,16 @@ class SimpleScriptController(Node):
         self.timer = self.create_timer(0.05, self.timer_callback)
 
         self.get_logger().info('SimpleScriptController started.')
+
+    def publish_velocity(self, twist):
+        if self.stamped:
+            message = TwistStamped()
+            message.header.stamp = self.get_clock().now().to_msg()
+            message.header.frame_id = 'base_link'
+            message.twist = twist
+        else:
+            message = twist
+        self.cmd_pub.publish(message)
 
     def timer_callback(self):
         msg = Twist()
@@ -59,17 +71,18 @@ class SimpleScriptController(Node):
             msg.linear.x = 0.0
             msg.angular.z = 0.0
 
-        self.cmd_pub.publish(msg)
+        self.publish_velocity(msg)
 
 
 def main(args=None):
-    rclpy.init(args=args)
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     node = SimpleScriptController()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
+        node.publish_velocity(Twist())
         node.destroy_node()
         rclpy.shutdown()
 

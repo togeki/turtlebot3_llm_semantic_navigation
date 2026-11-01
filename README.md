@@ -1,206 +1,119 @@
-# turtlebot3_llm_semantic_navigation
-大規模言語モデルを用いた自然言語ナビゲーションシステム
+# 自然言語による TurtleBot3 制御
 
----
+日本語指示 → Gemini → JSON 行動計画 → ROS 2 → Gazebo Sim の TurtleBot3 Burger。
+既存の `gemini_planner` と時間制御ノードを使い、Physical AI 課題用に前進・旋回・停止の再現手順を整理しました。
 
-# 1. プロジェクト概要
+## 確認した環境と結果
 
-本プロジェクトは，自然言語のみで移動ロボットを制御する新しいヒューマン・ロボット・インタラクション手法を提案する。
-TurtleBot3 と ROS2 を基盤とし，Google Gemini などの大規模言語モデル（LLM）を用いて，
-ユーザ指示をロボット行動計画（移動・旋回・停止など）へ自動変換するシステムを実装した。
+2026-11-01、UTM 上の Ubuntu 24.04.3 / ROS 2 Jazzy / Gazebo Sim 8.10.0 / Python 3.12 で確認。
 
-Key idea
-```
-User → Natural Language → LLM → Semantic Plan → Robot executes
-```
-従来の「座標指定」や「低レベル制御コマンド」と異なり，
-本研究では意味的な指示（例：窓の近くへ移動して）を基点とした操作を目指す。
+- ROS パッケージのビルド成功、計画検証テスト 13 件成功。
+- 整理した launch から Gazebo GUI・Burger・ROS bridge の起動成功。
+- `/cmd_vel` は `geometry_msgs/msg/TwistStamped`。旧 Twist 発行コードを対応させた。
+- 同じ制御ノードによる固定計画：前進 0.2 m → 右転 90° → 停止。`/odom` 測定は約 0.195 m、−88.8°、終了時速度はほぼ 0。
+- 実際の Gemini 2.5 Flash に日語指示を送り、前進 0.2 m・右転 90°・停止の JSON を取得して実行成功。AI 計画の実測は前進 **0.19524 m**、右転 **88.77°**、終了時の線速度・角速度は **0**。初回 API 呼び出しは ServerError、再試行後は成功した。
+- 提出動画はまだ未収録。上記は実行ログと里程計による確認結果。
 
----
-
-# 2. 研究動機
-
-従来のロボットナビゲーションは，数値ベース（x,y 座標）や低レベル命令（速度指令）に依存しており，操作には専門知識が必要であるという課題があった。
-
-しかし，人間は「前に進んで，右の壁の近くで止まって」のように意味レベルで移動指示を行う。
-
-LLM の登場により，
-ロボットが自然言語を理解し，自己判断で行動計画を生成する可能性が生まれた。
-
-本研究では，その第一段階として：
-
-### 自然言語 → 行動計画（JSON）→ ROS2 実行
-
-への変換パイプラインを構築し，
-Semantic Navigation への基礎的アーキテクチャを確立する。
-
----
-
-# 3. システム構成
-
-<img width="401" height="256" alt="名称未設定ファイル drawio" src="https://github.com/user-attachments/assets/ea119334-7991-40bf-a33d-371c4b16db92" />
-
-今後の拡張として，本構造は LV2 / LV3 の意味的地図構築や視覚情報統合に対応可能である。
-
----
-
-# 4. 動作原理
-
-## 4-1. Natural Language → JSON Plan
-
-ユーザ例：
+## 構成
 
 ```text
-少し前に進んでから左に曲がって
-```
-
-```json
-{
-  "plan": [
-    {"action": "FORWARD", "value": 0.5},
-    {"action": "TURN_LEFT", "value": 90},
-    {"action": "STOP", "value": 0}
-  ]
-}
-```
-
-この段階で LLM は，曖昧な自然言語を構造化された行動計画へ変換する役割を果たす。
-
-## 4-2. JSON Plan → TurtleBot3 Control
-
-ROS2 ノード llm_controller.py は—
-
-各アクションの実行時間を算出
-
-/cmd_vel に速度指令を発行
-
-計画を逐次実行
-
-ユーザはコマンドを入力するだけでよい。
-
----
-
-# 5. 使い方
-
-## 5-1. 必要要件
-
-* ROS 2 Humble / Foxy
-* Python 3.10+
-* Google Generative AI Library
-
-```bash
-pip install google-generativeai
-export GOOGLE_API_KEY="your_api_key_here"
-```
-
-## 5-2. ビルド
-
-```bash
-cd ~/ros2_ws
-colcon build
-source install/setup.bash
-```
-
-## 5-3. 実行
-
-```bash
-ros2 run tb3_llm_controller llm_controller
-```
-
-## 5-4. 指示例
-
-```text
-少し前に進んで
-前に進んで右に曲がって
-左に90度回転してから止まって
-壁の近くまで行って止まって
-```
-
----
-
-# 6. 実行例
-
-![Screencastfrom12-05-2025052947PM-ezgif com-video-to-gif-converter](https://github.com/user-attachments/assets/d02d3083-a6d5-4727-8637-58bf147cd5bb)
-
-ロボットがユーザの日本語指示を受け取り，
-LLM が生成した JSON 行動計画に従って自律的に動作する様子を確認した。
-
----
-
-# 7. Semantic Navigation（LV1.5）実装成果
-
-本プロジェクトは，単なる移動指示ではなく，
-**人間の自然言語に含まれる「意味」をロボット行動へ結び付ける**
-Semantic Navigation の基礎機構を実装しました。
-
-## 7-1. Semantic Places（意味地図）
-
-場所語彙と座標を紐づける `semantic_places.yaml` を導入：
-
-```yaml
-places:
-  window: {x: 1.0, y: 0.0, theta: 0.0}
-  door:   {x: -1.0, y: 0.0, theta: 3.14}
-  table:  {x: 0.0, y: 1.0, theta: 1.57}
-  water:  {x: 0.0, y: -1.0, theta: -1.57}
-```
-
-
-
-## 7-2. LLM による意味行動生成
-
-自然言語入力：
-
-```text
-窓のところに行って
-```
-
-Gemini により以下の行動計画を生成：
-
-```json
-[
-  {"action": "GO_TO_PLACE", "target": "window"}
-]
-```
-
-## 7-3. 実行ログ
-
-```csharp
-[INFO] Loaded semantic places: ['window', 'door', 'table', 'water']
-[INFO] [LV1.5] GO_TO_PLACE → 'window' = (x=1.00, y=0.00, theta=0.00)
-Plan finished. Robot will stop.
-```
-
-ロボットは 「窓」という語を意味的に理解し，
-　その座標へ移動する行動に変換できるようになった。
-
-プロジェクト構成：
-
-```text
+scripts/setup.sh              隔離 venv と ROS パッケージのビルド
+scripts/sim.sh                Jazzy シミュレーションの起動
+scripts/controller.sh         Key を表示せず対話コントローラを起動
+scripts/verify_motion.py       実機構成の /odom による固定計画確認（AI なし）
 ros2_ws/src/tb3_llm_controller/
-  ├── tb3_llm_controller/
-  │     ├── llm_controller.py
-  │     └── gemini_planner.py
-  └── config/
-        └── semantic_places.yaml
+  launch/demo_sim.launch.py    インストール済み ROBOTIS の world / model を使用
+  tb3_llm_controller/
+    gemini_planner.py          API 呼び出し・JSON 検証
+    llm_controller.py          時間制御による逐次実行
+    simple_script_controller.py 旧固定動作ノード
+  config/semantic_places.yaml  過去の場所辞書
 ```
 
+`main` の最小デモには Nav2 / YOLO を必要としません。以前の Nav2 / カメラ実験は `lv2_nav2_yolo` ブランチにあります。VM の未コミット変更は別途バックアップ済みで、上書きしていません。このデモは意味的場所への実ナビゲーションを主張しません。
 
+## 1. 準備とビルド
 
+ROS 2 Jazzy、Gazebo Sim 8、TurtleBot3 のセットアップ済み Ubuntu を対象とします。Humble や Gazebo Classic のコマンドを混用しないでください。
+既存環境が不足する場合のみ（この apt 手順自体はクリーン OS で未検証）：
 
- 
+```bash
+sudo apt update
+sudo apt install python3-venv python3-colcon-common-extensions python3-yaml \
+  ros-jazzy-turtlebot3-gazebo ros-jazzy-ros-gz
+```
 
-# 8. 今後の研究展開
+リポジトリルートで：
 
-現在，本システムは Semantic Navigation の LV1~LV1.5 を達成した。
-次の段階として以下を計画している：
+```bash
+bash scripts/setup.sh
+```
 
-LV2：視覚セマンティック認識  
- - カメラ + YOLO による物体検出  
- - 机の近くへ」「ドア側に移動」など，視覚情報を用いた意味的ナビゲーション  
+`venv` はシステム ROS Python を参照します。システム Python への pip インストールは行いません。Google SDK は `google-genai==2.34.0`。SDK の使い方は [Google 公式資料](https://googleapis.github.io/python-genai/) を参照。
 
-LV3：環境理解と抽象指示推論  
- - LLM に環境情報（障害物・可視物体など）を入力  
- - 「安全な場所」「空いている場所」など，抽象的指示に対する意味推論と行動理由の生成  
+## 2. シミュレーションを起動
 
----
+**Ubuntu デスクトップ内の端末 A** でリポジトリルートから：
+
+```bash
+bash scripts/sim.sh
+```
+
+UTM で Ogre2 がクラッシュしたため、Ogre とソフトウェア描画を使います。Ubuntu のデスクトップ端末なら DISPLAY と XAUTHORITY は通常既に設定されています。SSH の場合は、実際のデスクトップセッションの値が必要です。値を推測せず確認してください。
+
+## 3. AI を使わず接続を確認
+
+別の端末 B、リポジトリルートで：
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source venv/bin/activate
+source ros2_ws/install/setup.bash
+python scripts/verify_motion.py
+```
+
+ロボットの周囲を空けて実行します。約 0.2 m 前進し右転して停止し、実測結果を出力します。これは固定動作テストです。
+
+## 4. Gemini による自然言語デモ
+
+端末 B で：
+
+```bash
+bash scripts/controller.sh
+```
+
+初回は API Key を非表示で入力します。設定済みの `GEMINI_API_KEY` / `GOOGLE_API_KEY`、またはローカルの `~/.config/pai/gemini_api_key` も使用できます。Key はコード、Git、スクリーン録画に含めません。Key ファイルを使う場合は権限を 600 にしてください。
+
+入力例：
+
+```text
+0.2メートル前進して、右に90度回転して、停止してください
+```
+
+生成 JSON と Gazebo の動きを確認します。前進は 0.5 m 以下、旋回は 180 度以下、計画は最大 10 ステップ。末尾に STOP を補います。形式不正・範囲外・`GO_TO_PLACE` は実行前に拒否します。`q` または Ctrl+C で終了します。
+
+同じ指示の API → 制御 → 里程計を自動確認する場合、Key を環境変数に設定した端末で `python scripts/verify_motion.py --gemini` を実行できます。固定計画版と同じ距離・角度を判定します。
+
+モデルの初期値は既存プロジェクト由来の `gemini-2.5-flash`。利用可能なモデルはアカウントと時期で変わります。必要なら `GEMINI_MODEL` に利用可能なモデル ID を設定します。API エラー時は Key、モデル利用可否、ネットワーク、割当量を確認してください。
+
+旧 Twist bridge の環境では `-p stamped_cmd_vel:=false` を ROS 引数として渡せます。ただし Humble での動作は今回未検証です。
+
+## 停止と制約
+
+まず制御端末で Ctrl+C。別端末からも停止を送れます：
+
+```bash
+source /opt/ros/jazzy/setup.bash
+ros2 topic pub --once /cmd_vel geometry_msgs/msg/TwistStamped '{twist: {linear: {x: 0.0}, angular: {z: 0.0}}}'
+```
+
+動作ノードが生きていると指令を再発行するため、停止コマンドだけに依存しないでください。同時に teleop / Nav2 など別の速度発行ノードを動かさないでください。
+
+距離と角度は速度×時間の近似です。障害物回避・画像認識・自己位置推定・実機用の安全機構はありません。シミュレーションの空いた場所で実行してください。
+
+## 提出用
+
+1. 実際の Gemini 解析から動作までの確認は完了。撮影時にも成功ログを残す。
+2. 1〜3 分の動画で自然言語入力、生成 JSON、ロボット動作、停止を見せる。Key は映さない。
+3. [REPORT.md](REPORT.md) の未検証箇所を実測結果で更新する。
+4. ソースの差分と敏感情報を確認してから GitHub に反映する。動画、venv、ビルド成果物、API Key はコミットしない。
