@@ -1,41 +1,115 @@
-# 自然言語による TurtleBot3 制御
+# TurtleBot3 LLM Semantic Navigation
 
-日本語指示 → Gemini → JSON 行動計画 → ROS 2 → Gazebo Sim の TurtleBot3 Burger。
-既存の `gemini_planner` と時間制御ノードを使い、Physical AI 課題用に前進・旋回・停止の再現手順を整理しました。
+**大規模言語モデルを用いた自然言語による移動ロボット制御**
 
-## 確認した環境と結果
+TurtleBot3 と ROS 2 を用い、Google Gemini などの大規模言語モデル（LLM）によって日本語の指示をロボットの行動計画へ変換し、シミュレーション環境で実行するプロジェクトです。
 
-2026-11-01、UTM 上の Ubuntu 24.04.3 / ROS 2 Jazzy / Gazebo Sim 8.10.0 / Python 3.12 で確認。
+現在のメインデモでは、**自然言語 → LLM → JSON 形式の行動計画 → ROS 2 → TurtleBot3** という一連の処理を実装しています。将来的には、周囲の環境や場所の意味を考慮したセマンティックナビゲーションへの発展を目指します。
 
-- ROS パッケージのビルド成功、計画検証テスト 13 件成功。
-- 整理した launch から Gazebo GUI・Burger・ROS bridge の起動成功。
-- `/cmd_vel` は `geometry_msgs/msg/TwistStamped`。旧 Twist 発行コードを対応させた。
-- 同じ制御ノードによる固定計画：前進 0.2 m → 右転 90° → 停止。`/odom` 測定は約 0.195 m、−88.8°、終了時速度はほぼ 0。
-- 実際の Gemini 2.5 Flash に日語指示を送り、前進 0.2 m・右転 90°・停止の JSON を取得して実行成功。AI 計画の実測は前進 **0.19524 m**、右転 **88.77°**、終了時の線速度・角速度は **0**。初回 API 呼び出しは ServerError、再試行後は成功した。
-- 提出動画はまだ未収録。上記は実行ログと里程計による確認結果。
+---
 
-## 構成
+## 1. プロジェクト概要
+
+一般的なロボットの操作では、座標や速度、旋回角度などを明示的に指定する必要があります。一方、人は日常的に「少し前に進んで、右に曲がって」のような自然言語で移動を指示します。
+
+本プロジェクトでは、LLM を使って自然言語の指示を構造化し、ROS 2 のロボット制御に接続することで、より直感的な操作方法を検討しています。
+
+主な構成要素は以下のとおりです。
+
+- **TurtleBot3 Burger**：シミュレーション上の移動ロボット
+- **ROS 2**：ノード間通信と速度指令の実行
+- **Google Gemini**：日本語の指示を JSON 形式の行動計画に変換
+- **Gazebo Sim**：ロボットの動作を確認するシミュレーション環境
+
+現段階で動作確認しているのは、前進・旋回・停止などの**基本動作の逐次実行**です。「窓の近くへ移動する」など、環境中の意味的な場所への自律ナビゲーションは、現在のメインデモの対象ではありません。
+
+## 2. 開発の目的
+
+従来の移動ロボット制御では、利用者がロボットの制御方法や移動先の座標を理解していることが前提となる場合があります。
+
+そこで、自然言語で与えた指示を LLM で解釈し、ロボットが実行できる行動に変換する仕組みを構築しました。まずは基本的な動作を確実に実行するパイプラインを作成し、その後、場所の意味やセンサ情報を利用したナビゲーションへ段階的に拡張する方針です。
+
+## 3. システム構成
+
+![システム構成図](https://github.com/user-attachments/assets/ea119334-7991-40bf-a33d-371c4b16db92)
+
+基本的な処理の流れは次のとおりです。
 
 ```text
-scripts/setup.sh              隔離 venv と ROS パッケージのビルド
-scripts/sim.sh                Jazzy シミュレーションの起動
-scripts/controller.sh         Key を表示せず対話コントローラを起動
-scripts/verify_motion.py       実機構成の /odom による固定計画確認（AI なし）
-ros2_ws/src/tb3_llm_controller/
-  launch/demo_sim.launch.py    インストール済み ROBOTIS の world / model を使用
-  tb3_llm_controller/
-    gemini_planner.py          API 呼び出し・JSON 検証
-    llm_controller.py          時間制御による逐次実行
-    simple_script_controller.py 旧固定動作ノード
-  config/semantic_places.yaml  過去の場所辞書
+ユーザーの日本語指示
+        ↓
+Google Gemini（指示の解釈）
+        ↓
+JSON 形式の行動計画
+        ↓
+ROS 2 制御ノード
+        ↓
+/cmd_vel（速度指令）
+        ↓
+Gazebo Sim 上の TurtleBot3 Burger
 ```
 
-`main` の最小デモには Nav2 / YOLO を必要としません。以前の Nav2 / カメラ実験は `lv2_nav2_yolo` ブランチにあります。VM の未コミット変更は別途バックアップ済みで、上書きしていません。このデモは意味的場所への実ナビゲーションを主張しません。
+### 自然言語から行動計画への変換
 
-## 1. 準備とビルド
+入力例：
 
-ROS 2 Jazzy、Gazebo Sim 8、TurtleBot3 のセットアップ済み Ubuntu を対象とします。Humble や Gazebo Classic のコマンドを混用しないでください。
-既存環境が不足する場合のみ（この apt 手順自体はクリーン OS で未検証）：
+```text
+0.2メートル前進して、右に90度回転して、停止してください
+```
+
+行動計画の例：
+
+```json
+{
+  "plan": [
+    {"action": "FORWARD", "value": 0.2},
+    {"action": "TURN_RIGHT", "value": 90},
+    {"action": "STOP", "value": 0}
+  ]
+}
+```
+
+`gemini_planner.py` が計画を生成・検証し、`llm_controller.py` が各アクションを順番に実行します。移動距離と旋回角度は、速度と実行時間に基づく近似的な制御です。
+
+### 現在の実装範囲
+
+- 日本語の指示から、前進・旋回・停止を含む行動計画を生成
+- JSON の形式と動作範囲を実行前に検証
+- ROS 2 の `/cmd_vel` を通じて、計画を順番に実行
+- Gazebo Sim 上で動作を確認
+
+現在のメインデモでは、前進距離は最大 0.5 m、旋回角度は最大 180°、計画は最大 10 ステップに制限しています。停止動作は計画の末尾に補完されます。未対応の `GO_TO_PLACE` などは実行前に拒否します。
+
+## 4. 動作環境
+
+2026年11月1日に、以下の環境で動作確認を行いました。
+
+| 項目 | 環境 |
+| --- | --- |
+| OS | Ubuntu 24.04.3（UTM 仮想マシン） |
+| ROS 2 | Jazzy |
+| シミュレータ | Gazebo Sim 8.10.0 |
+| ロボット | TurtleBot3 Burger |
+| Python | 3.12 |
+| LLM | Gemini 2.5 Flash（確認時のモデル） |
+
+> 以下の手順は ROS 2 Jazzy / Gazebo Sim を対象としています。ROS 2 Humble や Gazebo Classic での動作は、この構成では未検証です。
+
+## 5. セットアップと実行方法
+
+### 5.1 準備・ビルド
+
+ROS 2 Jazzy、Gazebo Sim、TurtleBot3 関連パッケージが利用できる Ubuntu 環境を用意してください。
+
+リポジトリのルートディレクトリで以下を実行します。
+
+```bash
+bash scripts/setup.sh
+```
+
+このスクリプトで Python の仮想環境と ROS 2 パッケージを準備します。Google GenAI SDK は、確認時には `google-genai==2.34.0` を使用しました。
+
+必要な ROS 2 パッケージがまだ導入されていない場合の例：
 
 ```bash
 sudo apt update
@@ -43,27 +117,39 @@ sudo apt install python3-venv python3-colcon-common-extensions python3-yaml \
   ros-jazzy-turtlebot3-gazebo ros-jazzy-ros-gz
 ```
 
-リポジトリルートで：
+※ 上記の `apt` による導入手順は、クリーンな OS での一括検証は行っていません。
 
-```bash
-bash scripts/setup.sh
-```
+### 5.2 シミュレーションを起動
 
-`venv` はシステム ROS Python を参照します。システム Python への pip インストールは行いません。Google SDK は `google-genai==2.34.0`。SDK の使い方は [Google 公式資料](https://googleapis.github.io/python-genai/) を参照。
-
-## 2. シミュレーションを起動
-
-**Ubuntu デスクトップ内の端末 A** でリポジトリルートから：
+Ubuntu デスクトップの端末 A で、リポジトリのルートから実行します。
 
 ```bash
 bash scripts/sim.sh
 ```
 
-UTM で Ogre2 がクラッシュしたため、Ogre とソフトウェア描画を使います。Ubuntu のデスクトップ端末なら DISPLAY と XAUTHORITY は通常既に設定されています。SSH の場合は、実際のデスクトップセッションの値が必要です。値を推測せず確認してください。
+UTM 環境では、描画の安定性を考慮して Ogre とソフトウェアレンダリングを使用します。SSH 経由で GUI を起動する場合は、Ubuntu のデスクトップセッションに対応する表示環境の設定が別途必要です。
 
-## 3. AI を使わず接続を確認
+### 5.3 自然言語でロボットを操作
 
-別の端末 B、リポジトリルートで：
+別の端末 B で実行します。
+
+```bash
+bash scripts/controller.sh
+```
+
+Gemini API キーが未設定の場合は、スクリプトの案内に従って入力してください。環境変数 `GEMINI_API_KEY` / `GOOGLE_API_KEY` も利用できます。**API キーを GitHub や画面録画に含めないでください。**
+
+入力例：
+
+```text
+0.2メートル前進して、右に90度回転して、停止してください
+```
+
+生成された JSON 計画と Gazebo 上でのロボットの動作を確認できます。終了する場合は `q` または `Ctrl+C` を使用します。
+
+### 5.4 動作確認（任意）
+
+AI を使用せずに固定計画の実行を確認する場合：
 
 ```bash
 source /opt/ros/jazzy/setup.bash
@@ -72,48 +158,56 @@ source ros2_ws/install/setup.bash
 python scripts/verify_motion.py
 ```
 
-ロボットの周囲を空けて実行します。約 0.2 m 前進し右転して停止し、実測結果を出力します。これは固定動作テストです。
-
-## 4. Gemini による自然言語デモ
-
-端末 B で：
+API キーを設定したうえで Gemini を含む一連の動作を確認する場合：
 
 ```bash
-bash scripts/controller.sh
+python scripts/verify_motion.py --gemini
 ```
 
-初回は API Key を非表示で入力します。設定済みの `GEMINI_API_KEY` / `GOOGLE_API_KEY`、またはローカルの `~/.config/pai/gemini_api_key` も使用できます。Key はコード、Git、スクリーン録画に含めません。Key ファイルを使う場合は権限を 600 にしてください。
+## 6. 実行結果
 
-入力例：
+2026年11月1日の確認記録では、ROS 2 パッケージのビルド、計画検証テスト 13 件、および Gazebo Sim 上での動作を確認しました。
+
+| 確認項目 | 結果 |
+| --- | --- |
+| 指示 | 0.2 m 前進 → 右に 90° 旋回 → 停止 |
+| Gemini による JSON 生成 | 成功（初回 API エラー後、再試行） |
+| 実測前進距離 | 約 0.195 m |
+| 実測旋回角度 | 約 88.8°（右回転） |
+| 終了時の速度 | 線速度・角速度ともに 0 |
+
+実測値は `/odom` の記録に基づきます。速度と時間による制御のため、指示値と実測値には差が生じます。
+
+## 7. ディレクトリ構成
 
 ```text
-0.2メートル前進して、右に90度回転して、停止してください
+scripts/
+  setup.sh                   環境準備・ビルド
+  sim.sh                     シミュレーション起動
+  controller.sh              自然言語コントローラ起動
+  verify_motion.py           動作確認
+
+ros2_ws/src/tb3_llm_controller/
+  launch/demo_sim.launch.py  Gazebo シミュレーション起動
+  tb3_llm_controller/
+    gemini_planner.py        LLM による行動計画生成・検証
+    llm_controller.py        行動計画の逐次実行
+    simple_script_controller.py
+                              固定動作による制御
+  config/semantic_places.yaml
+                             場所情報の設定ファイル
 ```
 
-生成 JSON と Gazebo の動きを確認します。前進は 0.5 m 以下、旋回は 180 度以下、計画は最大 10 ステップ。末尾に STOP を補います。形式不正・範囲外・`GO_TO_PLACE` は実行前に拒否します。`q` または Ctrl+C で終了します。
+## 8. 現在の制約と今後の展開
 
-同じ指示の API → 制御 → 里程計を自動確認する場合、Key を環境変数に設定した端末で `python scripts/verify_motion.py --gemini` を実行できます。固定計画版と同じ距離・角度を判定します。
+本プロジェクトは段階的な開発を想定しています。
 
-モデルの初期値は既存プロジェクト由来の `gemini-2.5-flash`。利用可能なモデルはアカウントと時期で変わります。必要なら `GEMINI_MODEL` に利用可能なモデル ID を設定します。API エラー時は Key、モデル利用可否、ネットワーク、割当量を確認してください。
+- **LV1：自然言語による基本動作の制御** — Gemini が日本語の指示を JSON に変換し、ROS 2 が移動・旋回・停止を実行する段階。現在のメインデモに相当します。
+- **LV2：意味的な場所へのナビゲーション** — 場所の名前と座標情報の対応付け、Nav2 による目標地点への移動、カメラ・物体検出の利用を検討する段階。関連する実験コードは `lv2_nav2_yolo` ブランチにあります。
+- **LV3：環境理解と抽象的な指示への対応** — センサ情報や環境の状態を LLM に与え、「安全な場所」「空いている場所」などの抽象的な指示を扱うことを目指します。
 
-旧 Twist bridge の環境では `-p stamped_cmd_vel:=false` を ROS 引数として渡せます。ただし Humble での動作は今回未検証です。
+現時点のメインデモには、障害物回避、画像認識、環境を認識した目的地選択、実機向けの安全機構は含まれていません。動作確認は、障害物のないシミュレーション環境で行ってください。
 
-## 停止と制約
+---
 
-まず制御端末で Ctrl+C。別端末からも停止を送れます：
-
-```bash
-source /opt/ros/jazzy/setup.bash
-ros2 topic pub --once /cmd_vel geometry_msgs/msg/TwistStamped '{twist: {linear: {x: 0.0}, angular: {z: 0.0}}}'
-```
-
-動作ノードが生きていると指令を再発行するため、停止コマンドだけに依存しないでください。同時に teleop / Nav2 など別の速度発行ノードを動かさないでください。
-
-距離と角度は速度×時間の近似です。障害物回避・画像認識・自己位置推定・実機用の安全機構はありません。シミュレーションの空いた場所で実行してください。
-
-## 提出用
-
-1. 実際の Gemini 解析から動作までの確認は完了。撮影時にも成功ログを残す。
-2. 1〜3 分の動画で自然言語入力、生成 JSON、ロボット動作、停止を見せる。Key は映さない。
-3. [REPORT.md](REPORT.md) の未検証箇所を実測結果で更新する。
-4. ソースの差分と敏感情報を確認してから GitHub に反映する。動画、venv、ビルド成果物、API Key はコミットしない。
+このリポジトリは、自然言語とロボット制御を接続する実装を起点として、セマンティックナビゲーションの機能を段階的に検討するためのものです。
