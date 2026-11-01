@@ -4,7 +4,7 @@ import math
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, TwistStamped
 from ament_index_python.packages import get_package_share_directory
 from std_msgs.msg import String
 import os,yaml
@@ -24,13 +24,17 @@ class LLMController(Node):
 
         self.semantic_places = self._load_semantic_places()
 
-        self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
+        self.cmd_pub = self.create_publisher(TwistStamped, 'cmd_vel', 10)
 
         self.plan = plan
         self.current_step_index = 0
         self.ticks_remaining = 0
 
         self.place_pub = self.create_publisher(String, 'llm_place', 10)
+        self.nav_pending = False
+        self.nav_result_sub = self.create_subscription(
+            String, 'tb3_nav_result', self.nav_result_callback, 10
+        )
 
         # 制御パラメータ
         self.dt = 0.05            # timer period (s)
@@ -43,7 +47,8 @@ class LLMController(Node):
         self.timer = self.create_timer(self.dt, self.timer_callback)
 
         self.get_logger().info(f"LLMController started with {len(self.plan)} steps.")
-        self._start_next_step()
+        self.plan_started = False
+        self.startup_timer = self.create_timer(0.2, self.start_when_ready)
 
     # ---- 内部ロジック ----
 
@@ -91,51 +96,79 @@ class LLMController(Node):
             self.get_logger().info(f"[Step {self.current_step_index}] STOP")
 
         elif action == "GO_TO_PLACE":
-            target = step.get("target", "").lower()
+            target = str(step.get("target", "")).strip().lower()
 
-            if not target:
-                self.get_logger().warn("[LV2] GO_TO_PLACE 没有 target，跳过此步骤")
-                self.current_step_index += 1
-                self._start_next_step()
+            if target not in self.semantic_places:
+                self.get_logger().error(f"Unknown place: {target}")
+                self.finished = True
+                self.current_mode = "stop"
+                self.ticks_remaining = -1
                 return
 
-            # ✅ 直接把语义地点发给 Nav2 管线的入口 /llm_place
+            self.nav_pending = True
+            self.current_mode = "nav"
+            self.ticks_remaining = 0
+
             msg = String()
             msg.data = target
             self.place_pub.publish(msg)
 
-            # 如果 semantic_places 能读到，也顺便 log 一下（可选）
-            if target in self.semantic_places:
-                x, y, theta = self.semantic_places[target]
-                self.get_logger().info(
-                    f"[LV2] GO_TO_PLACE '{target}' → (x={x:.2f}, y={y:.2f}, theta={theta:.2f}) → 已发布到 /llm_place，由 Nav2 执行导航"
-                )
-            else:
-                self.get_logger().info(
-                    f"[LV2] GO_TO_PLACE '{target}' 已发布到 /llm_place（semantic_places 中未找到详细坐标，依赖下游节点处理）"
-                )
-
-            # 本节点不再自己发 cmd_vel，由 Nav2 接管移动
-            self.current_mode = "stop"
-            self.ticks_remaining = 1  # 让 timer 走一步然后进入下一步
-            self.current_step_index += 1
-            self._start_next_step()
+            self.get_logger().info(
+                f"[NAV] Going to {target}. Waiting for Nav2 result..."
+            )
             return
-
 
         else:
             self.get_logger().warn(f"Unknown action: {action}, skipping.")
             self.current_step_index += 1
             self._start_next_step()
 
+    def nav_result_callback(self, msg: String):
+        if not self.nav_pending:
+            return
+
+        result = msg.data.strip().upper()
+        self.nav_pending = False
+
+        if result == "SUCCEEDED":
+            self.get_logger().info("[NAV] Arrived. Next step.")
+            self.current_step_index += 1
+            self._start_next_step()
+        else:
+            self.get_logger().error(
+                f"[NAV] Navigation failed: {result}. Aborting plan."
+            )
+            self.current_mode = "stop"
+            self.ticks_remaining = -1
+            self.finished = True
+
+    def publish_velocity(self, twist):
+        msg = TwistStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'base_link'
+        msg.twist = twist
+        self.cmd_pub.publish(msg)
+
+    def start_when_ready(self):
+        needs_nav = any(step.get("action") == "GO_TO_PLACE" for step in self.plan)
+        if needs_nav and self.place_pub.get_subscription_count() == 0:
+            return
+
+        self.startup_timer.cancel()
+        self.plan_started = True
+        self._start_next_step()
+
     def timer_callback(self):
+        if not self.plan_started or self.nav_pending:
+            return
+
         msg = Twist()
 
         if self.ticks_remaining == -1:
             # 完全終了：停止状態を維持
             msg.linear.x = 0.0
             msg.angular.z = 0.0
-            self.cmd_pub.publish(msg)
+            self.publish_velocity(msg)
             return
 
         if self.current_mode == "forward":
@@ -151,7 +184,7 @@ class LLMController(Node):
             msg.linear.x = 0.0
             msg.angular.z = 0.0
 
-        self.cmd_pub.publish(msg)
+        self.publish_velocity(msg)
 
         self.ticks_remaining -= 1
         if self.ticks_remaining <= 0:

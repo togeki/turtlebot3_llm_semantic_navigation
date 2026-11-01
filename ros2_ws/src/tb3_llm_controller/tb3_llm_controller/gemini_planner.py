@@ -2,62 +2,79 @@
 
 import os
 import json
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 # 環境変数から API キーを取得
 API_KEY = os.getenv("GEMINI_API_KEY")
 if not API_KEY:
     raise RuntimeError("環境変数 GEMINI_API_KEY が設定されていません。export GEMINI_API_KEY=... してください。")
 
-genai.configure(api_key=API_KEY)
+# Gemini client is initialized when needed.
 
 # 利用するモデル（あなたの list_models にあったやつ）
-MODEL_NAME = "models/gemini-2.5-flash"
+MODEL_NAME = "gemini-2.5-flash"
 
 
 SYSTEM_PROMPT = """
-あなたはロボットのための行動計画エージェントです。
+あなたは屋内巡回ロボット TurtleBot3 の行動計画エージェントです。
+日本語の指示を解釈し、JSON 配列のみを出力してください。
 
-入力は人間が話す日本語の指示です。
-出力は JSON のリストで、各要素は 1 ステップの行動を表します。
+利用できる巡回地点は次の4か所です。
+point_a, point_b, point_c, point_e
 
-行動(action)は次の2種類のみを使用してください：
+各地点は実際の屋内地図に登録された到達可能な巡回地点です。
+地点名から座標を推測しないでください。
 
-1) 低レベル行動（LV1）
-   - "FORWARD": まっすぐ進む
-   - "TURN_LEFT": 左へ曲がる
-   - "TURN_RIGHT": 右へ曲がる
-   - "STOP": 止まる
+利用可能な行動:
+- GO_TO_PLACE: {"action":"GO_TO_PLACE","target":"point_a"}
+- FORWARD: {"action":"FORWARD","value":0.2}
+- TURN_LEFT: {"action":"TURN_LEFT","value":90}
+- TURN_RIGHT: {"action":"TURN_RIGHT","value":90}
+- STOP: {"action":"STOP","value":0}
 
-2) 意味的移動（LV1.5 / LV2）
-   - "GO_TO_PLACE": 目的地（"window", "door", "table", "water" など）
-      例: { "action": "GO_TO_PLACE", "target": "window" }
+巡回指示の場合:
+- 「家を巡回して」「4か所を巡回して」などの指示では、
+  point_c → point_a → point_e → point_b
+  の順に GO_TO_PLACE を4個出力してください。
+- 指定された地点だけを訪問する指示では、指定順に出力してください。
+- 地点間の移動方法は Nav2 が決定するため、FORWARD や TURN を追加しないでください。
+- すべての巡回計画の最後に STOP を追加してください。
+- 登録されていない場所への移動を要求された場合は STOP のみ出力してください。
+- 出力はJSON配列のみ。説明文やMarkdownは不要です。
 
-重要：
-- 「窓」「ドア」「机」などの語彙は、必ず target に英語の識別子
-  ("window", "door", "table") として出力してください。
-- 移動距離や角度は出力しないでください。ロボット側で処理します。
-- JSON以外の文章は出力しないでください。
-
-入力例：
-「窓のところに行って止まって」
-出力例：
+例:
+入力: 家の中の4か所を巡回してください
+出力:
 [
-  {"action": "GO_TO_PLACE", "target": "window"},
-  {"action": "STOP"}
+ {"action":"GO_TO_PLACE","target":"point_c"},
+ {"action":"GO_TO_PLACE","target":"point_a"},
+ {"action":"GO_TO_PLACE","target":"point_e"},
+ {"action":"GO_TO_PLACE","target":"point_b"},
+ {"action":"STOP","value":0}
 ]
-
-それでは、ユーザ入力に対する行動計画を生成してください。
 """
+
 
 
 def call_gemini(command: str) -> str:
     """日本語コマンドから JSON 文字列（plan を含む）を生成する。"""
-    model = genai.GenerativeModel(MODEL_NAME)
+
 
     prompt = SYSTEM_PROMPT + "\n\nユーザの指示文：\n" + command
 
-    response = model.generate_content(prompt)
+    with genai.Client(
+        api_key=API_KEY,
+        http_options=types.HttpOptions(timeout=30000)
+    ) as client:
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0
+            )
+        )
 
     # response.text には JSON 文字列または ```json ... ``` 形式が入ることが多い
     return response.text

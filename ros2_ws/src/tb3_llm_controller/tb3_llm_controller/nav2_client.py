@@ -7,6 +7,8 @@ from rclpy.action import ActionClient
 
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
+from std_msgs.msg import String
+from action_msgs.msg import GoalStatus
 
 
 class Nav2Client(Node):
@@ -17,6 +19,7 @@ class Nav2Client(Node):
 
         # Nav2 Action Client
         self._client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+        self._result_pub = self.create_publisher(String, 'tb3_nav_result', 10)
         self.get_logger().info('Nav2 Client Ready. Call go_to(x, y, yaw) to move.')
 
         # 订阅 LLM / bridge 发来的 Pose 目标
@@ -66,6 +69,7 @@ class Nav2Client(Node):
         goal_handle = future.result()
         if not goal_handle.accepted:
             self.get_logger().warn('Goal rejected by Nav2.')
+            self._publish_result('FAILED')
             return
         self.get_logger().info('Goal accepted. Waiting for result...')
         result_future = goal_handle.get_result_async()
@@ -74,6 +78,14 @@ class Nav2Client(Node):
     def _result_callback(self, future):
         status = future.result().status
         self.get_logger().info(f'Nav2 finished with status: {status}')
+        self._publish_result(
+            'SUCCEEDED' if status == GoalStatus.STATUS_SUCCEEDED else 'FAILED'
+        )
+
+    def _publish_result(self, status):
+        msg = String()
+        msg.data = status
+        self._result_pub.publish(msg)
 
 
 def main(args=None):

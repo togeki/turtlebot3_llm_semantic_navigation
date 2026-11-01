@@ -17,6 +17,7 @@ setup(
          glob('config/*.yaml')),
         (os.path.join('share', package_name, 'launch'), [
             'launch/tb3_semantic_world.launch.py',
+            'launch/demo_sim.launch.py',
         ]),
         (os.path.join('share', package_name, 'worlds'), [
             'worlds/semantic_room.world',

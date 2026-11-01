@@ -1,11 +1,17 @@
 places:
-  - name: "door"
-    x: 1.0
-    y: 0.0
-    yaw: 0.0
-
-  - name: "window"
-    x: 2.0
-    y: 1.0
-    yaw: 1.57
-
+- name: point_c
+  x: 6.33
+  y: -4.261
+  yaw: 0.0
+- name: point_a
+  x: 1.305
+  y: 3.407
+  yaw: 0.0
+- name: point_e
+  x: -2.365
+  y: 4.588
+  yaw: 0.0
+- name: point_b
+  x: -6.41
+  y: -2.427
+  yaw: 0.0
